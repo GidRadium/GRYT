@@ -3,17 +3,50 @@
 
 ## Download
 ```bash
-git clone https://github.com/GidRadium/gryt.git
+git clone https://github.com/GidRadium/GRYT.git
 ```
 
 ## Install
-Create python env, load libs, etc.
+Create python enviroment and load libs.
 ```bash
-
+cd GRYT
+uv venv
+source .venv/bin/activate
+uv sync
 ```
 
 ## Setup
-Configure file-with-keys
+Configure .env file
+```bash
+nano .env
+```
+Fill with your secrets
+```bash
+TG_API_ID=123456
+TG_API_HASH=abcdef123456
+TG_SESSION=prod-session
+```
+And save the file
 
 ## Start
-python start.py --config file-with-keys
+```bash
+python start.py # or `uv run start.py`
+```
+## Project
+Minimum project structure
+```
+GRYT/
+├── .gitignore
+├── .env.example
+├── pyproject.toml
+├── cookies/
+│   ├── yt_cookies.txt
+│   └── etc...
+├── start.py
+├── src/
+│   ├── bot.py
+│   ├── database.py
+│   ├── logger.py
+│   ├── translations.py
+│   └── 
+```
