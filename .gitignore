@@ -3,3 +3,5 @@
 uv.lock
 **/__pycache__/
 **/pyrightconfig.json
+**/*.session
+/logs/log_*.txt

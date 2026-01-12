@@ -1,15 +1,20 @@
 from dotenv import load_dotenv
 import os
 import asyncio
-import src.bot as gryt
+from src.bot import BotConfig, Bot
 
 load_dotenv()
 
-api_session: str = os.environ["TG_SESSION"]
-api_id: int = int(os.environ["TG_API_ID"])
-api_hash: str = os.environ["TG_API_HASH"]
-api_token: str = os.environ["TG_TOKEN"]
+config = BotConfig()
 
-bot = gryt.Bot(api_session, api_id, api_hash)
+config.session_name = os.environ["TG_SESSION"]
+config.api_id = int(os.environ["TG_API_ID"])
+config.api_hash = os.environ["TG_API_HASH"]
+config.api_token = os.environ["TG_TOKEN"]
+config.admin_ids = [int(os.environ["ADMIN_1_ID"]), int(os.environ["ADMIN_2_ID"])]
+config.logging_chat_id = int(os.environ["LOG_CHAT_ID"])
+config.logging_chat_auth = int(os.environ["LOG_CHAT_AUTH"])
 
-asyncio.run(bot.run(api_token))
+bot = Bot(config)
+
+asyncio.run(bot.run())
