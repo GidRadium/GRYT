@@ -17,9 +17,8 @@ console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
 # File
-file_handler = logging.FileHandler(
-    filename=os.path.dirname(os.path.abspath(__file__)) + f"/../logs/log_[{strftime("%Y-%m-%d_%H-%M-%S")}].txt"
-)
+LOGFILE_PATH = os.path.dirname(os.path.abspath(__file__)) + f"/../logs/log_[{strftime("%Y-%m-%d_%H-%M-%S")}].txt"
+file_handler = logging.FileHandler(LOGFILE_PATH)
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)

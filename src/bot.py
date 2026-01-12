@@ -7,7 +7,7 @@ from typing import Any, cast
 import asyncio
 import signal
 
-from src.logger import logger
+from src.logger import LOGFILE_PATH, logger
 
 class BotConfig:
     session_name: str
@@ -44,6 +44,17 @@ class Bot:
 
             name = html.escape(s=msg.chat.name or msg.chat.username or str(msg.chat.id) or '')
             await msg.respond(markdown=f"Hello, **{name}**!")
+
+        @self.client.on(events.NewMessage, filters.Command('/logs'))
+        async def command_logs_handler(event: Any) -> None:
+            msg = cast(NewMessage, event)
+            sender = html.escape(s=f"[{msg.chat.id}] {(msg.chat.name or msg.chat.username or '')}")
+            logger.info(f"{sender}: {msg.text}")
+
+            if msg.chat.id in self.config.admin_ids or msg.chat.id == self.config.logging_chat_id:
+                await self.client.send_file(msg.chat, file=LOGFILE_PATH)
+            else:
+                await msg.respond("You have no permissions.")
 
         @self.client.on(events.NewMessage)
         async def my_print_handler(event: Any) -> None:
