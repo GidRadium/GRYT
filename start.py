@@ -3,6 +3,8 @@ import os
 import asyncio
 from src.bot import BotConfig, Bot
 
+
+
 load_dotenv()
 
 config = BotConfig()

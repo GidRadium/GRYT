@@ -5,3 +5,4 @@ uv.lock
 **/pyrightconfig.json
 **/*.session
 /logs/log_*.txt
+cookies/*
