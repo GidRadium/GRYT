@@ -9,25 +9,17 @@ import asyncio
 import signal
 import re
 
+from src.bot_config import BotConfig
 from src.sites.youtube_media import YouTubeMediaAPI
 import src.sites.site_base as site_base
 from src.logger import LOGFILE_PATH, logger
 import src.translations as s
 from src.user_settings import UserSettings
 
-sites_APIs: list[site_base.SiteAPI] = [] # [YouTubeDashAPI, YandexMusicAPI, DzenDashAPI]
+sites_APIs: list[type[site_base.SiteAPI]] = [YouTubeMediaAPI] # [YouTubeDashAPI, YandexMusicAPI, DzenDashAPI]
 
-YouTubeMediaAPI.get_data("https://youtu.be/7pbcW63C6yw?si=jeGQrfioU0p_xkXY")
-exit()
-
-class BotConfig:
-    session_name: str
-    api_id: int
-    api_hash: str
-    api_token: str
-    logging_chat_id: int
-    logging_chat_auth: int
-    admin_ids: list[int]
+# YouTubeMediaAPI.get_data("https://youtu.be/7pbcW63C6yw?si=jeGQrfioU0p_xkXY")
+# exit()
 
 class Bot:
     client: telethon.Client
@@ -64,21 +56,21 @@ class Bot:
             await on_new_text_message(self, msg)
 
     async def shutdown(self):
-            if self._shutting_down:
-                return
-            self._shutting_down = True
+        if self._shutting_down:
+            return
+        self._shutting_down = True
 
-            logger.info("Stopping bot...")
+        logger.info("Stopping bot...")
 
-            try:
-                await self.client.send_message(
-                    ChannelRef(self.config.logging_chat_id, self.config.logging_chat_auth),
-                    "Bot stopped."
-                )
-            except Exception as e:
-                logger.exception(msg="Can't send stopping message.", exc_info=e)
+        try:
+            await self.client.send_message(
+                ChannelRef(self.config.logging_chat_id, self.config.logging_chat_auth),
+                "Bot stopped."
+            )
+        except Exception as e:
+            logger.exception(msg="Can't send stopping message.", exc_info=e)
 
-            await self.client.disconnect()
+        await self.client.disconnect()
 
     async def run(self):
         # Register Ctrl+C
@@ -132,13 +124,19 @@ async def on_new_text_message(bot: Bot, msg: NewMessage) -> None:
         await msg.reply(error_message[lang])
         return
 
+    data, error_message = site_API.get_data(link)
+
+    if error_message:
+        await msg.reply(error_message[lang])
+        return
+
+    await msg.reply(str(data))
 
     # Получение данных (с прогрессом, так как проверка каждой впн и акка занимает время)
     # Создание клавиатуры кнопок по данным
     # Отправка сообщения с картинкой
     # Создание request в бд (позже)
     # И сохранение его в оперативке
-    pass
 
 def get_user_settings(bot: Bot, telegram_user_id: int) -> UserSettings:
     """
@@ -170,20 +168,20 @@ def is_link(link: str) -> bool:
         r'(?:/?|[/?]\S+)$', re.IGNORECASE)
     return (re.match(regex, link) is not None)
 
-def parse_user_input(input: str) -> tuple[str, site_base.SiteAPI, dict]: # [link, siteAPI, error_message]
+def parse_user_input(input: str) -> tuple[str, type[site_base.SiteAPI], dict]: # [link, siteAPI, error_message]
     input = input.lstrip()
     splitted = input.split(maxsplit=1)
 
     if len(splitted) == 0:
-        return "", site_base.SiteAPI(), s.err_message_empty
+        return "", site_base.SiteAPI, s.err_message_empty
 
     link = splitted[0]
 
     if not is_link(link):
-        return "", site_base.SiteAPI(), s.err_not_link
+        return "", site_base.SiteAPI, s.err_not_link
 
     for site_API in sites_APIs:
         if site_API.supports(link):
             return link, site_API, dict()
 
-    return link, site_base.SiteAPI(), s.err_no_link_support
+    return link, site_base.SiteAPI, s.err_no_link_support

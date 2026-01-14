@@ -30,8 +30,9 @@ And save the file
 
 ## Start
 ```bash
-python start.py # or `uv run start.py`
+uv run start.py
 ```
+
 ## Project
 Minimum project structure
 ```

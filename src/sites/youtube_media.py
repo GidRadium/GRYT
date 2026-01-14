@@ -1,15 +1,18 @@
-import src.sites.site_base as base
+from __future__ import annotations
 import re
+import src.sites.site_base as base
 from src.logger import logger
+from src.enviroment import MEDIA_PROXY, YOUTUBE_COOKIES
+from io import StringIO
 
+from dataclasses import dataclass, field
+from typing import Any
 import yt_dlp
 
-COOKIES = "YOUTUBE_COOKIES from .env"
-PROXIES = [
-    "MEDIA_PROXY from .env",
-    "",
-]
+COOKIES = YOUTUBE_COOKIES
+PROXIES = [MEDIA_PROXY, ""]
 
+@dataclass
 class YouTubeAudioStream:
     stream_id: str = ""
     extension: str = ""
@@ -19,8 +22,15 @@ class YouTubeAudioStream:
     language: str = ""
 
     def __str__(self) -> str:
-        return f"{self.stream_id}|{self.language}|{self.extension}|{self.codec}|{self.bitrate_kbit_per_s}Kbit/s|{round(float(self.size_bytes)/1048576)}Mb"
+        return (
+            f"{self.stream_id}.{self.language}.{self.extension}."
+            f"{self.codec[:4]}."
+            f"{self.bitrate_kbit_per_s}Kbit/s."
+            f"{round(float(self.size_bytes) / 1048576)}Mb"
+        )
 
+
+@dataclass
 class YouTubeVideoStream:
     stream_id: str = ""
     extension: str = ""
@@ -31,8 +41,13 @@ class YouTubeVideoStream:
     fps: int = 0
 
     def __str__(self) -> str:
-        return f"{self.stream_id}|{self.extension}|{self.height}p{self.fps}|{self.codec}|{round(float(self.size_bytes)/1048576)}Mb"
+        return (
+            f"{self.stream_id}.{self.height}p{self.fps}.{self.extension}."
+            f"{self.codec[:4]}.{round(float(self.size_bytes) / 1048576)}Mb"
+        )
 
+
+@dataclass
 class YouTubeMergedStream:
     stream_id: str = ""
     extension: str = ""
@@ -45,8 +60,14 @@ class YouTubeMergedStream:
     language: str = ""
 
     def __str__(self) -> str:
-        return f"{self.stream_id}|{self.language}|{self.extension}|{self.height}p{self.fps}|{self.vcodec}+{self.acodec}|{round(float(self.size_bytes)/1048576)}Mb"
+        return (
+            f"{self.stream_id}.{self.language}.{self.extension}."
+            f"{self.height}p{self.fps}.{self.vcodec[:4]}+{self.acodec[:4]}."
+            f"{round(float(self.size_bytes) / 1048576)}Mb"
+        )
 
+
+@dataclass
 class YouTubeMediaData(base.SiteData):
     link: str = ""
     id: str = ""
@@ -54,54 +75,77 @@ class YouTubeMediaData(base.SiteData):
     thumbnail_url: str = ""
     description: str = ""
     duration_seconds: int = 0
-    is_live = False
+    is_live: bool = False
     media_type: str = ""
     author: str = ""
 
-    audio_streams: list[YouTubeAudioStream] = list[YouTubeAudioStream]()
-    video_streams: list[YouTubeVideoStream] = list[YouTubeVideoStream]()
-    merged_streams: list[YouTubeMergedStream] = list[YouTubeMergedStream]()
+    audio_streams: list[YouTubeAudioStream] = field(default_factory=list)
+    video_streams: list[YouTubeVideoStream] = field(default_factory=list)
+    merged_streams: list[YouTubeMergedStream] = field(default_factory=list)
 
     def __str__(self) -> str:
-        result = f"""link: {self.link}
-id: {self.id}
-title: {self.title}
-author: {self.author}
-thumbnail_url: {self.thumbnail_url}
-duration_seconds: {self.duration_seconds}
-is_live: {self.is_live}
-media_type: {self.media_type}
-len(description): {len(self.description)}
-"""
-        result += f"audio_streams ({len(self.audio_streams)}):\n"
-        for stream in self.audio_streams:
-            result += f"{stream}\n"
-        result += f"video_streams ({len(self.video_streams)}):\n"
-        for stream in self.video_streams:
-            result += f"{stream}\n"
-        result += f"merged_streams ({len(self.merged_streams)}):\n"
-        for stream in self.merged_streams:
-            result += f"{stream}\n"
-        return result
+        buf = StringIO()
+
+        buf.write(
+            f"link: {self.link}\n"
+            f"id: {self.id}\n"
+            f"title: {self.title}\n"
+            f"author: {self.author}\n"
+            f"thumbnail_url: {self.thumbnail_url}\n"
+            f"duration_seconds: {self.duration_seconds}\n"
+            f"is_live: {self.is_live}\n"
+            f"media_type: {self.media_type}\n"
+            f"len(description): {len(self.description)}\n"
+        )
+
+        for name, items in [
+            ("audio_streams", self.audio_streams),
+            ("video_streams", self.video_streams),
+            ("merged_streams", self.merged_streams),
+        ]:
+            buf.write(f"{name} ({len(items)}):\n")
+            for item in items:
+                buf.write(f"{item}\n")
+
+        return buf.getvalue()
 
 
 class YouTubeMediaPreparedData(base.SitePreparedData):
     pass
 
+
 class YouTubeMediaAPI(base.SiteAPI):
-    @staticmethod
-    def supports(link: str) -> bool:
-        return bool(re.match(
-            (r'^(?:http|ftp)s?://('
-            r'youtube\.com|'
-            r'www\.youtube\.com|'
-            r'youtu\.be|'
-            r'music\.youtube\.com'
-            r')/')
-            , link))
 
     @staticmethod
-    def get_data(link: str) -> tuple[YouTubeMediaData, dict]: # data, error_message
+    def supports(link: str) -> bool:
+        return bool(
+            re.match(
+                r'^(?:http|ftp)s?://('
+                r'youtube\.com|'
+                r'www\.youtube\.com|'
+                r'youtu\.be|'
+                r'music\.youtube\.com'
+                r')/',
+                link
+            )
+        )
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return default
+
+    @staticmethod
+    def get_data(link: str) -> tuple[YouTubeMediaData, dict]:
         logger.info(f"[YouTubeDashAPI.get_data({link})]")
 
         ydl_opts_base = {
@@ -114,14 +158,13 @@ class YouTubeMediaAPI(base.SiteAPI):
         }
 
         last_error = ""
-        # used_proxy = ""
         info = None
 
         for proxy in PROXIES:
-            opts = ydl_opts_base | {"proxy": proxy}
+            opts = {**ydl_opts_base, "proxy": proxy}
             ydl = None
             try:
-                ydl = yt_dlp.YoutubeDL(opts) # type: ignore[arg-type]
+                ydl = yt_dlp.YoutubeDL(opts)  # type: ignore[arg-type]
                 info = ydl.extract_info(link, download=False)
                 logger.info(f"Proxy: {proxy}")
                 break
@@ -136,60 +179,72 @@ class YouTubeMediaAPI(base.SiteAPI):
             return YouTubeMediaData(), {"error": last_error}
 
         data = YouTubeMediaData()
-        data.link = link
-        data.id = info["id"]
-        data.title = str(info["title"]) if "title" in info else ""
-        data.thumbnail_url = str(info["thumbnail"]) if "thumbnail" in info else ""
-        data.description = str(info["description"]) if "description" in info else ""
-        data.duration_seconds = int(info["duration"] or "0") if "duration" in info else 0
-        data.is_live = "is_live" in info and info["is_live"] == "True"
-        data.media_type = str(info["media_type"]) if "media_type" in info else ""
-        data.author = str(info["channel"]) if "channel" in info else ""
 
-        if "formats" in info and info["formats"] is not None:
-            for format in info["formats"]:
-                if "acodec" not in format or "vcodec" not in format:
-                    continue
-                if format["acodec"] == "none" and format["vcodec"] == "none":
-                    continue
-                if format["acodec"] != "none" and format["vcodec"] == "none":
-                    audio_stream = YouTubeAudioStream()
-                    audio_stream.stream_id = format["format_id"]
-                    audio_stream.extension = format["ext"]
-                    audio_stream.codec = format["acodec"]
-                    audio_stream.size_bytes = int(format["filesize"]) if "filesize" in format and str(format["filesize"]).isdigit() else int(format["filesize_approx"]) if "filesize_approx" in format and str(format["filesize_approx"]).isdigit() else 0
-                    audio_stream.bitrate_kbit_per_s = int(audio_stream.size_bytes / (data.duration_seconds * 128))
-                    audio_stream.language = format["language"]
-                    data.audio_streams.append(audio_stream)
-                if format["acodec"] == "none" and format["vcodec"] != "none":
-                    video_stream = YouTubeVideoStream()
-                    video_stream.stream_id = format["format_id"]
-                    video_stream.extension = format["ext"]
-                    video_stream.codec = format["vcodec"]
-                    video_stream.size_bytes = int(format["filesize"]) if "filesize" in format and str(format["filesize"]).isdigit() else int(format["filesize_approx"]) if "filesize_approx" in format and str(format["filesize_approx"]).isdigit() else 0
-                    video_stream.height = format["height"]
-                    video_stream.width = format["width"]
-                    video_stream.fps = int(format["fps"])
-                    data.video_streams.append(video_stream)
-                if format["acodec"] != "none" and format["vcodec"] != "none":
-                    merged_stream = YouTubeMergedStream()
-                    merged_stream.stream_id = format["format_id"]
-                    merged_stream.extension = format["ext"]
-                    merged_stream.acodec = format["acodec"]
-                    merged_stream.vcodec = format["vcodec"]
-                    merged_stream.size_bytes = int(format["filesize"]) if "filesize" in format and str(format["filesize"]).isdigit() else int(format["filesize_approx"]) if "filesize_approx" in format and str(format["filesize_approx"]).isdigit() else 0
-                    if merged_stream.size_bytes == 0 and "tbr" in format:
-                        try:
-                            merged_stream.size_bytes = int(float(format["tbr"]) * data.duration_seconds * 128)
-                        except:
-                            pass
-                    merged_stream.height = format["height"]
-                    merged_stream.width = format["width"]
-                    merged_stream.fps = int(format["fps"])
-                    merged_stream.language = format["language"]
-                    data.merged_streams.append(merged_stream)
+        data.link = link
+        data.id = info.get("id", "")
+        data.title = str(info.get("title", ""))
+        data.thumbnail_url = str(info.get("thumbnail", ""))
+        data.description = str(info.get("description", ""))
+        data.duration_seconds = YouTubeMediaAPI._safe_int(info.get("duration", 0))
+        data.is_live = bool(info.get("is_live", False))
+        data.media_type = str(info.get("media_type", ""))
+        data.author = str(info.get("channel", ""))
+
+        formats = info.get("formats") or []
+
+        for fmt in formats:
+
+            acodec = fmt.get("acodec", "none")
+            vcodec = fmt.get("vcodec", "none")
+
+            # Useless streams
+            if acodec == "none" and vcodec == "none":
+                continue
+
+            size = (
+                YouTubeMediaAPI._safe_int(fmt.get("filesize"))
+                or YouTubeMediaAPI._safe_int(fmt.get("filesize_approx"))
+                or 0
+            )
+
+            # Audio only
+            if acodec != "none" and vcodec == "none":
+                audio_stream = YouTubeAudioStream()
+                audio_stream.stream_id = fmt.get("format_id", "")
+                audio_stream.extension = fmt.get("ext", "")
+                audio_stream.codec = acodec
+                audio_stream.size_bytes = size
+                audio_stream.bitrate_kbit_per_s = int(size / (128 * data.duration_seconds)) if data.duration_seconds > 0 and size > 0 else 0
+                audio_stream.language = fmt.get("language", "") or ""
+                data.audio_streams.append(audio_stream)
+
+            # Video only
+            elif acodec == "none" and vcodec != "none":
+                video_stream = YouTubeVideoStream()
+                video_stream.stream_id = fmt.get("format_id", "")
+                video_stream.extension = fmt.get("ext", "")
+                video_stream.codec = vcodec
+                video_stream.size_bytes = size
+                video_stream.height = YouTubeMediaAPI._safe_int(fmt.get("height", 0))
+                video_stream.width = YouTubeMediaAPI._safe_int(fmt.get("width", 0))
+                video_stream.fps = YouTubeMediaAPI._safe_int(fmt.get("fps", 0))
+                data.video_streams.append(video_stream)
+
+            # Merged Video+Audio
+            else:
+                merged_stream = YouTubeMergedStream()
+                merged_stream.stream_id = fmt.get("format_id", "")
+                merged_stream.extension = fmt.get("ext", "")
+                merged_stream.acodec = acodec
+                merged_stream.vcodec = vcodec
+                merged_stream.size_bytes = size or int(YouTubeMediaAPI._safe_float(fmt.get("tbr", 0.0)) * 128 * data.duration_seconds)
+                merged_stream.height = YouTubeMediaAPI._safe_int(fmt.get("height", 0))
+                merged_stream.width = YouTubeMediaAPI._safe_int(fmt.get("width", 0))
+                merged_stream.fps = YouTubeMediaAPI._safe_int(fmt.get("fps", 0))
+                merged_stream.language = fmt.get("language", "") or ""
+                data.merged_streams.append(merged_stream)
 
         logger.info(data)
 
-
-        return YouTubeMediaData(), dict()
+        # ВАЖНО: возвращаем СФОРМИРОВАННЫЙ объект
+        return data, {}
