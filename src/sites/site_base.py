@@ -29,8 +29,8 @@ class SiteAPI:
         return 0, 0
 
     @staticmethod
-    def generate_response(data: SiteData, query: str, request_id: int, user_settings: UserSettings) -> tuple[str, list[list[tuple[str, str]]], dict[int, str], dict]: # text, buttons_data, buttons_queries, error_message
-        return "", list[list[tuple[str, str]]](), dict[int, str](), s.err_not_defined
+    def generate_response(data: SiteData, query: str, request_id: int, user_settings: UserSettings) -> tuple[str, list[list[tuple[str, str]]], dict|None]: # text, buttons_data, error_message
+        return "", list[list[tuple[str, str]]](), s.err_not_defined
 
     @staticmethod
     def get_image_url(data: SiteData) -> str:

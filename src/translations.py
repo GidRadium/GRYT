@@ -194,6 +194,11 @@ err_invalid_argument = {
     'ru': "Недопустимый аргумент команды. Использование: /share <download_id>"
 }
 
+err_invalid_data_type = {
+    'en': "Invalid data type.",
+    'ru': "Недопустимый тип данных."
+}
+
 err_unavailable_to_share = {
     'en': "Unavailable to share.",
     'ru': "Невозможно поделиться."

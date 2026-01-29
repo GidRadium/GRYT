@@ -1,13 +1,15 @@
 import telethon
 from telethon import events
-from telethon.events import NewMessage, filters
-from telethon.types import ChannelRef, User #, UserRef, GroupRef
+# from telethon._impl.client.types.keyboard import Keyboard
+from telethon.events import NewMessage, filters, ButtonCallback
+from telethon.types import ChannelRef, Message, User, InlineKeyboard, buttons #, UserRef, GroupRef
 
 import html
 from typing import Any, cast
 import asyncio
 import signal
 import re
+from random import randint
 
 from src.bot_config import BotConfig
 from src.sites.youtube_media import YouTubeMediaAPI
@@ -21,13 +23,26 @@ sites_APIs: list[type[site_base.SiteAPI]] = [YouTubeMediaAPI] # [YouTubeDashAPI,
 # YouTubeMediaAPI.get_data("https://youtu.be/7pbcW63C6yw?si=jeGQrfioU0p_xkXY")
 # exit()
 
+class Request:
+    id: int = 0 # unique for all requests, also stored in database
+    msg_id: int = 0
+    telegram_user_id: int = 0
+    chat_id: int = 0
+    link: str = ""
+    query: str = ""
+    caption: str = ""
+    site_API: type[site_base.SiteAPI] = site_base.SiteAPI
+    data: site_base.SiteData = site_base.SiteData()
+
 class Bot:
     client: telethon.Client
     config: BotConfig
+    requests: dict[int, Request] # request.id in db -> Request
     _shutting_down = False
 
     def __init__(self, config: BotConfig):
         self.config = config
+        self.requests = dict[int, Request]()
 
         # Create telethon client
         self.client = telethon.Client(
@@ -54,6 +69,16 @@ class Bot:
             msg = cast(NewMessage, event)
             logger.info(f"{html.escape(s=f"[{msg.chat.id}] {(msg.chat.name or msg.chat.username or '')}")}: {msg.text}")
             await on_new_text_message(self, msg)
+
+        @self.client.on(events.ButtonCallback)
+        async def button_callback_handler(event: Any) -> None:
+            callback = cast(ButtonCallback, event)
+            msg = await callback.get_message()
+            if msg is None:
+                return
+            logger.info(f"{html.escape(s=f"[{msg.chat.id}] {(msg.chat.name or msg.chat.username or '')}")}: {callback.data.decode('utf-8')}")
+            await on_button_callback(self, callback, msg)
+
 
     async def shutdown(self):
         if self._shutting_down:
@@ -124,19 +149,49 @@ async def on_new_text_message(bot: Bot, msg: NewMessage) -> None:
         await msg.reply(error_message[lang])
         return
 
-    data, error_message = site_API.get_data(link)
+    search_msg = await msg.reply(markdown=s.searching[lang])
+
+    # data, error_message = site_API.get_data(link)
+    data, error_message = await asyncio.to_thread(site_API.get_data, link) # Not working
 
     if error_message:
         await msg.reply(error_message[lang])
         return
 
-    await msg.reply(str(data))
+    # Drafting request.
+    request = Request()
+    request.telegram_user_id = msg.chat.id
+    request.chat_id = msg.chat.id
+    request.site_API = site_API
+    request.data = data
+    request.link = link
+    request.query = ""
+    request.id = randint(1, 1000000000000) # bot.database.create_new_request(request.telegram_user_id)
 
-    # Получение данных (с прогрессом, так как проверка каждой впн и акка занимает время)
-    # Создание клавиатуры кнопок по данным
-    # Отправка сообщения с картинкой
+    text, buttons_data, error_message = site_API.generate_response(data, request.query, request.id, user_settings)
+
+    # await msg.reply(str(data))
+    await search_msg.delete()
+    await bot.client.send_photo(msg.chat, file=site_API.get_image_url(data), caption=text, keyboard=create_buttons(buttons_data))
+
+    bot.requests[request.id] = request
     # Создание request в бд (позже)
-    # И сохранение его в оперативке
+
+async def on_button_callback(bot: Bot, callback: ButtonCallback, msg: Message) -> None:
+    query = callback.data.decode('utf-8')
+    user_settings = get_user_settings(bot, msg.chat.id)
+    lang = user_settings.default_language
+    query_splitted = query.split(" ", maxsplit=1)
+    if len(query_splitted) != 2:
+        return
+    query_type, query_data = query_splitted
+    #if query_type in ["clarify", "download"]:
+    request_id, query_data = query_data.split(" ", maxsplit=1)
+    request = bot.requests[int(request_id)]
+    request.query = query_data
+    text, buttons_data, error_message = request.site_API.generate_response(request.data, request.query, request.id, user_settings)
+    await msg.edit(text=text, keyboard=create_buttons(buttons_data))
+
 
 def get_user_settings(bot: Bot, telegram_user_id: int) -> UserSettings:
     """
@@ -185,3 +240,33 @@ def parse_user_input(input: str) -> tuple[str, type[site_base.SiteAPI], dict]: #
             return link, site_API, dict()
 
     return link, site_base.SiteAPI, s.err_no_link_support
+
+def create_buttons(buttons_data: list[list[tuple[str, str]]]) -> InlineKeyboard:
+    keyboard = []
+    for row in buttons_data:
+        row_buttons = []
+        for title, callback in row:
+            row_buttons.append(buttons.Callback(title, callback.encode('utf-8')))
+        keyboard.append(row_buttons)
+    return InlineKeyboard(keyboard)
+
+def get_request_by_id(bot: Bot, request_id: int) -> Request:
+    #if request_id in bot.requests:
+    return bot.requests[request_id]
+"""
+    request_data = bot.database.get_request_data(request_id)
+    request = Request()
+    request.id = request_id
+    request.telegram_user_id = request_data["telegram_user_id"]
+    request.chat_id = request_data["chat_id"]
+    request.msg_id = request_data["msg_id"]
+    request.link = request_data["link"]
+    request.query = request_data["site_dependent_query"]
+    request.caption = request_data["caption"]
+    link, site_API, error_message = parse_user_input(request_data["link"])
+    request.site_API = site_API
+    data, error_message = site_API.get_data(link)
+    request.data = data
+
+    return request
+"""

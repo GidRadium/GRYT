@@ -1,16 +1,21 @@
 from __future__ import annotations
 import re
+from io import StringIO
+from dataclasses import dataclass, field
+from typing import Any
+
+import yt_dlp
+
 import src.sites.site_base as base
 from src.logger import logger
 from src.enviroment import MEDIA_PROXY, YOUTUBE_COOKIES
-from io import StringIO
+from src.user_settings import UserSettings
+import src.translations as s
 
-from dataclasses import dataclass, field
-from typing import Any
-import yt_dlp
 
 COOKIES = YOUTUBE_COOKIES
 PROXIES = [MEDIA_PROXY, ""]
+# PROXIES = [""]
 
 @dataclass
 class YouTubeAudioStream:
@@ -246,5 +251,114 @@ class YouTubeMediaAPI(base.SiteAPI):
 
         logger.info(data)
 
-        # ВАЖНО: возвращаем СФОРМИРОВАННЫЙ объект
         return data, {}
+
+    @staticmethod
+    def generate_response(data: base.SiteData, query: str, request_id: int, user_settings: UserSettings) -> tuple[str, list[list[tuple[str, str]]], dict|None]: # text, buttons_data, error_message
+        if not isinstance(data, YouTubeMediaData):
+            return "", [], s.err_invalid_data_type
+        yt_data: YouTubeMediaData = data
+        lang = user_settings.default_language
+        # query: "v1 [type](v/a/.) [stream](str/sv+sa/.) [language](ab/.)" . == None
+        query_splitted = query.split(" ")
+        buttons_data = []
+
+        if ((query == "" and not user_settings.defaulf_suggest_more_streams)) or query.startswith("v1"):
+            v, stream_type, stream_id, stream_language = query_splitted if len(query_splitted) == 4 else ["v1", ".", ".", "."]
+
+
+            media_languages: list[str] = []
+            for audio_stream in yt_data.audio_streams:
+                if audio_stream.language and audio_stream.language not in media_languages:
+                    media_languages.append(audio_stream.language)
+
+            if len(media_languages) > 1:
+                if stream_language == ".":
+                    stream_language = media_languages[0]
+                new_stream_language = media_languages[(media_languages.index(stream_language) + 1) % len(media_languages)]
+                language_text = f"{s.default_language[lang]}:"
+                for lng in media_languages:
+                    language_text += f" [ {lng} ]" if lng == stream_language else f" {lng}"
+
+                new_audio_stream_id = ""
+                new_stream_id = stream_id
+                if stream_type == "a" or "+" in stream_id:
+                    for audio_stream in yt_data.audio_streams:
+                        if audio_stream.extension == "m4a" and audio_stream.language == new_stream_language:
+                            new_audio_stream_id = audio_stream.stream_id
+
+                    new_stream_id = new_audio_stream_id if stream_type == "a" else f"{stream_id.split('+')[0]}+{new_audio_stream_id}"
+
+                language_callback = f"clarify {request_id} {v} {stream_type} {new_stream_id} {new_stream_language}"
+
+                buttons_data.append([(language_text, language_callback)])
+
+            # Get best video streams
+            video_streams_id_in_data: dict[int, int] = dict()
+            for i in range(len(yt_data.video_streams)):
+                if yt_data.video_streams[i].extension == "mp4":
+                    video_streams_id_in_data[yt_data.video_streams[i].height] = i
+
+            # Get best audio stream
+            audio_stream_id_in_data = -1
+            for i in range(len(yt_data.audio_streams)):
+                if yt_data.audio_streams[i].extension == "m4a" and (len(media_languages) <= 1 or yt_data.audio_streams[i].language == stream_language):
+                    audio_stream_id_in_data = i
+
+            # Generate video and audio buttons data
+            v_streams_count = 0
+            buttons_data_row = [("---", "empty"), ("---", "empty")]
+            for i in video_streams_id_in_data.values():
+                size_bytes = (yt_data.video_streams[i].size_bytes + yt_data.audio_streams[audio_stream_id_in_data].size_bytes)
+                if size_bytes > 2*1024*1024*1024:
+                    continue
+
+                new_stream_id = f"{yt_data.video_streams[i].stream_id}+{yt_data.audio_streams[audio_stream_id_in_data].stream_id}"
+                video_button_text = f"{yt_data.video_streams[i].height}p{yt_data.video_streams[i].fps} | {round(size_bytes / (1024 * 1024))} Mb"
+                if new_stream_id != stream_id:
+                    buttons_data_row[v_streams_count % 2] = (
+                        video_button_text,
+                        f"clarify {request_id} {v} v {new_stream_id} {stream_language}"
+                    )
+                else:
+                    buttons_data_row[v_streams_count % 2] = (
+                        f"✅{video_button_text}",
+                        f"clarify {request_id} {v} . . {stream_language}"
+                    )
+
+                if v_streams_count % 2:
+                    buttons_data.append(buttons_data_row)
+                    buttons_data_row = [("---", "empty"), ("---", "empty")]
+
+                v_streams_count += 1
+
+            if v_streams_count % 2:
+                buttons_data.append(buttons_data_row)
+
+            if yt_data.audio_streams[audio_stream_id_in_data].size_bytes < 2*1024*1024*1024:
+                audio_button_text = f"Only audio | {round(yt_data.audio_streams[audio_stream_id_in_data].size_bytes / (1024 * 1024))} Mb"
+                if stream_type != "a":
+                    audio_button_data = (
+                        f"{audio_button_text}",
+                        f"clarify {request_id} {v} a {yt_data.audio_streams[audio_stream_id_in_data].stream_id} {stream_language}"
+                    )
+                else:
+                    audio_button_data = (
+                        f"✅{audio_button_text}",
+                        f"clarify {request_id} {v} . . {stream_language}"
+                    )
+
+                buttons_data.append([audio_button_data])
+
+                buttons_data.append([("More streams", f"clarify {request_id} v2")])
+
+        # query = "v2"
+
+        return "text", buttons_data, None
+
+    @staticmethod
+    def get_image_url(data: base.SiteData) -> str:
+        if not isinstance(data, YouTubeMediaData):
+            return ""
+        yt_data: YouTubeMediaData = data
+        return yt_data.thumbnail_url
