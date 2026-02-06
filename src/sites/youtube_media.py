@@ -3,6 +3,7 @@ import re
 from io import StringIO
 from dataclasses import dataclass, field
 from typing import Any
+from html import escape
 
 import yt_dlp
 
@@ -14,7 +15,7 @@ import src.translations as s
 
 
 COOKIES = YOUTUBE_COOKIES
-PROXIES = [MEDIA_PROXY, ""]
+PROXIES = ["", MEDIA_PROXY]
 # PROXIES = [""]
 
 @dataclass
@@ -262,23 +263,26 @@ class YouTubeMediaAPI(base.SiteAPI):
         # query: "v1 [type](v/a/.) [stream](str/sv+sa/.) [language](ab/.)" . == None
         query_splitted = query.split(" ")
         buttons_data = []
+        caption = "text"
 
+        # Generage default buttons
         if ((query == "" and not user_settings.defaulf_suggest_more_streams)) or query.startswith("v1"):
             v, stream_type, stream_id, stream_language = query_splitted if len(query_splitted) == 4 else ["v1", ".", ".", "."]
 
-
+            # Get all media languages
             media_languages: list[str] = []
             for audio_stream in yt_data.audio_streams:
                 if audio_stream.language and audio_stream.language not in media_languages:
                     media_languages.append(audio_stream.language)
 
+            # Create a button to switch languages
             if len(media_languages) > 1:
                 if stream_language == ".":
                     stream_language = media_languages[0]
                 new_stream_language = media_languages[(media_languages.index(stream_language) + 1) % len(media_languages)]
                 language_text = f"{s.default_language[lang]}:"
                 for lng in media_languages:
-                    language_text += f" [ {lng} ]" if lng == stream_language else f" {lng}"
+                    language_text += f" 【{lng}】" if lng == stream_language else f" {lng}"
 
                 new_audio_stream_id = ""
                 new_stream_id = stream_id
@@ -305,7 +309,7 @@ class YouTubeMediaAPI(base.SiteAPI):
                 if yt_data.audio_streams[i].extension == "m4a" and (len(media_languages) <= 1 or yt_data.audio_streams[i].language == stream_language):
                     audio_stream_id_in_data = i
 
-            # Generate video and audio buttons data
+            # Generate video buttons data
             v_streams_count = 0
             buttons_data_row = [("---", "empty"), ("---", "empty")]
             for i in video_streams_id_in_data.values():
@@ -322,7 +326,7 @@ class YouTubeMediaAPI(base.SiteAPI):
                     )
                 else:
                     buttons_data_row[v_streams_count % 2] = (
-                        f"✅{video_button_text}",
+                        f"✅ {video_button_text}",
                         f"clarify {request_id} {v} . . {stream_language}"
                     )
 
@@ -335,6 +339,7 @@ class YouTubeMediaAPI(base.SiteAPI):
             if v_streams_count % 2:
                 buttons_data.append(buttons_data_row)
 
+            # Generate audio button data
             if yt_data.audio_streams[audio_stream_id_in_data].size_bytes < 2*1024*1024*1024:
                 audio_button_text = f"Only audio | {round(yt_data.audio_streams[audio_stream_id_in_data].size_bytes / (1024 * 1024))} Mb"
                 if stream_type != "a":
@@ -344,21 +349,31 @@ class YouTubeMediaAPI(base.SiteAPI):
                     )
                 else:
                     audio_button_data = (
-                        f"✅{audio_button_text}",
+                        f"✅ {audio_button_text}",
                         f"clarify {request_id} {v} . . {stream_language}"
                     )
 
                 buttons_data.append([audio_button_data])
 
-                buttons_data.append([("More streams", f"clarify {request_id} v2")])
+                if stream_type == ".":
+                    buttons_data.append([("More streams", f"clarify {request_id} v2")])
+                else:
+                    buttons_data.append([(
+                        "📥 Download 📥",
+                        f"download {request_id} {v} {stream_type} {stream_id} {stream_language}"
+                    )])
+
+            # Generate text between image and buttons
+            caption = f"<b>{escape(yt_data.title)}</b>\n<em>{escape(yt_data.author)}</em>"
 
         # query = "v2"
 
-        return "text", buttons_data, None
+        return caption, buttons_data, None
 
     @staticmethod
     def get_image_url(data: base.SiteData) -> str:
         if not isinstance(data, YouTubeMediaData):
             return ""
+
         yt_data: YouTubeMediaData = data
         return yt_data.thumbnail_url

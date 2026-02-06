@@ -68,8 +68,8 @@ bot_updated_recently = {
 }
 
 searching = {
-    'en': '__Searching...__',
-    'ru': '__Поиск...__',
+    'en': '_Searching..._',
+    'ru': '_Поиск..._',
 }
 
 downloading = {

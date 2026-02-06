@@ -20,9 +20,6 @@ from src.user_settings import UserSettings
 
 sites_APIs: list[type[site_base.SiteAPI]] = [YouTubeMediaAPI] # [YouTubeDashAPI, YandexMusicAPI, DzenDashAPI]
 
-# YouTubeMediaAPI.get_data("https://youtu.be/7pbcW63C6yw?si=jeGQrfioU0p_xkXY")
-# exit()
-
 class Request:
     id: int = 0 # unique for all requests, also stored in database
     msg_id: int = 0
@@ -40,6 +37,14 @@ class Bot:
     requests: dict[int, Request] # request.id in db -> Request
     _shutting_down = False
 
+    @staticmethod
+    def _parse_new_msg_to_logger(msg: events.NewMessage) -> str:
+        return f"{html.escape(s=f"[{msg.chat.id}] {(msg.chat.name or msg.chat.username or '')}")}: {msg.text}"
+
+    @staticmethod
+    def _parse_callback_msg_to_logger(msg: Message, callback: ButtonCallback) -> str:
+        return f"{html.escape(s=f"[{msg.chat.id}] {(msg.chat.name or msg.chat.username or '')}")}: [callback] {callback.data.decode('utf-8')}"
+
     def __init__(self, config: BotConfig):
         self.config = config
         self.requests = dict[int, Request]()
@@ -54,21 +59,21 @@ class Bot:
         # Setup message handlers
         @self.client.on(events.NewMessage, filters.Command('/start'))
         async def command_start_handler(event: Any) -> None:
-            msg = cast(NewMessage, event)
-            logger.info(f"{html.escape(s=f"[{msg.chat.id}] {(msg.chat.name or msg.chat.username or '')}")}: {msg.text}")
-            await on_command_start(self, msg)
+            msg = cast(events.NewMessage, event)
+            logger.info(self._parse_new_msg_to_logger(msg))
+            asyncio.create_task(on_command_start(self, msg))
 
         @self.client.on(events.NewMessage, filters.Command('/logs'))
         async def command_logs_handler(event: Any) -> None:
-            msg = cast(NewMessage, event)
-            logger.info(f"{html.escape(s=f"[{msg.chat.id}] {(msg.chat.name or msg.chat.username or '')}")}: {msg.text}")
-            await on_command_logs(self, msg)
+            msg = cast(events.NewMessage, event)
+            logger.info(self._parse_new_msg_to_logger(msg))
+            asyncio.create_task(on_command_logs(self, msg))
 
         @self.client.on(events.NewMessage, filters.All(filters.ChatType(User), filters.Incoming()))
         async def new_text_message(event: Any) -> None:
-            msg = cast(NewMessage, event)
-            logger.info(f"{html.escape(s=f"[{msg.chat.id}] {(msg.chat.name or msg.chat.username or '')}")}: {msg.text}")
-            await on_new_text_message(self, msg)
+            msg = cast(events.NewMessage, event)
+            logger.info(self._parse_new_msg_to_logger(msg))
+            asyncio.create_task(on_new_text_message(self, msg))
 
         @self.client.on(events.ButtonCallback)
         async def button_callback_handler(event: Any) -> None:
@@ -76,9 +81,9 @@ class Bot:
             msg = await callback.get_message()
             if msg is None:
                 return
-            logger.info(f"{html.escape(s=f"[{msg.chat.id}] {(msg.chat.name or msg.chat.username or '')}")}: {callback.data.decode('utf-8')}")
-            await on_button_callback(self, callback, msg)
 
+            logger.info(self._parse_callback_msg_to_logger(msg, callback))
+            asyncio.create_task(on_button_callback(self, event, msg))
 
     async def shutdown(self):
         if self._shutting_down:
@@ -120,17 +125,17 @@ class Bot:
         logger.info("Bot stopped.")
 
 
-async def on_command_start(bot: Bot, msg: NewMessage) -> None:
+async def on_command_start(bot: Bot, msg: events.NewMessage) -> None:
     name = html.escape(s=msg.chat.name or msg.chat.username or str(msg.chat.id) or '')
     await msg.respond(markdown=f"Hello, **{name}**!")
 
-async def on_command_logs(bot: Bot, msg: NewMessage) -> None:
+async def on_command_logs(bot: Bot, msg: events.NewMessage) -> None:
     if msg.chat.id in bot.config.admin_ids or msg.chat.id == bot.config.logging_chat_id:
         await bot.client.send_file(msg.chat, file=LOGFILE_PATH)
     else:
-        await msg.respond("You have no permissions.")
+        await msg.respond("You have no permissions to use this command.")
 
-async def on_new_text_message(bot: Bot, msg: NewMessage) -> None:
+async def on_new_text_message(bot: Bot, msg: events.NewMessage) -> None:
     # Обновление статуса пользователя в БД (позже)
     user_settings = get_user_settings(bot, msg.chat.id)
     lang = user_settings.default_language
@@ -139,13 +144,14 @@ async def on_new_text_message(bot: Bot, msg: NewMessage) -> None:
     if not msg.text:
         await msg.reply(s.err_message_empty[lang])
         return
+
     if msg.text.startswith("/"):
         await msg.reply(s.err_unknown_command[lang])
         return
 
     link, site_API, error_message = parse_user_input(msg.text)
 
-    if error_message:
+    if error_message is not None:
         await msg.reply(error_message[lang])
         return
 
@@ -160,7 +166,7 @@ async def on_new_text_message(bot: Bot, msg: NewMessage) -> None:
 
     # Drafting request.
     request = Request()
-    request.telegram_user_id = msg.chat.id
+    request.telegram_user_id = msg.sender.id if msg.sender is not None else msg.chat.id
     request.chat_id = msg.chat.id
     request.site_API = site_API
     request.data = data
@@ -172,7 +178,7 @@ async def on_new_text_message(bot: Bot, msg: NewMessage) -> None:
 
     # await msg.reply(str(data))
     await search_msg.delete()
-    await bot.client.send_photo(msg.chat, file=site_API.get_image_url(data), caption=text, keyboard=create_buttons(buttons_data))
+    await bot.client.send_photo(msg.chat, file=site_API.get_image_url(data), caption_html=text, keyboard=create_buttons(buttons_data))
 
     bot.requests[request.id] = request
     # Создание request в бд (позже)
@@ -181,16 +187,29 @@ async def on_button_callback(bot: Bot, callback: ButtonCallback, msg: Message) -
     query = callback.data.decode('utf-8')
     user_settings = get_user_settings(bot, msg.chat.id)
     lang = user_settings.default_language
+
+    if query in ["empty","", " ", "-"]:
+        await callback.answer("¯\_(ツ)_/¯")
+        return
+
+    # Get type of query
     query_splitted = query.split(" ", maxsplit=1)
     if len(query_splitted) != 2:
         return
     query_type, query_data = query_splitted
-    #if query_type in ["clarify", "download"]:
-    request_id, query_data = query_data.split(" ", maxsplit=1)
-    request = bot.requests[int(request_id)]
-    request.query = query_data
-    text, buttons_data, error_message = request.site_API.generate_response(request.data, request.query, request.id, user_settings)
-    await msg.edit(text=text, keyboard=create_buttons(buttons_data))
+
+    if query_type in ["clarify", "download"]:
+        request_id, query_data = query_data.split(" ", maxsplit=1)
+        if int(request_id) not in bot.requests:
+            #request = get from db
+            await callback.answer("Resend the link, please.")
+            return
+        #else
+        request = bot.requests[int(request_id)]
+        request.query = query_data
+        text, buttons_data, error_message = request.site_API.generate_response(request.data, request.query, request.id, user_settings)
+        await msg.edit(html=text, keyboard=create_buttons(buttons_data))
+
 
 
 def get_user_settings(bot: Bot, telegram_user_id: int) -> UserSettings:
@@ -223,7 +242,7 @@ def is_link(link: str) -> bool:
         r'(?:/?|[/?]\S+)$', re.IGNORECASE)
     return (re.match(regex, link) is not None)
 
-def parse_user_input(input: str) -> tuple[str, type[site_base.SiteAPI], dict]: # [link, siteAPI, error_message]
+def parse_user_input(input: str) -> tuple[str, type[site_base.SiteAPI], dict[str, str]|None]: # [link, siteAPI, error_message]
     input = input.lstrip()
     splitted = input.split(maxsplit=1)
 
@@ -237,7 +256,7 @@ def parse_user_input(input: str) -> tuple[str, type[site_base.SiteAPI], dict]: #
 
     for site_API in sites_APIs:
         if site_API.supports(link):
-            return link, site_API, dict()
+            return link, site_API, None
 
     return link, site_base.SiteAPI, s.err_no_link_support
 
