@@ -1,0 +1,11 @@
+[project]
+name = "gryt"
+version = "0.1.0"
+description = "Telegram bot, that can download media by link"
+requires-python = ">=3.12,<3.14"
+
+dependencies = [
+    "telethon @ https://github.com/LonamiWebs/Telethon/archive/v2.zip#subdirectory=client",
+    "yt-dlp[default] >= 2026.02.0a0",
+    "python-dotenv>=1.0,<2",
+]
