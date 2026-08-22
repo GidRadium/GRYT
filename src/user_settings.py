@@ -1,5 +1,6 @@
 import src.translations as s
 
+
 class UserSettings:
     telegram_user_id: int = 0
     default_language: str = "en"
